@@ -1,0 +1,19 @@
+# Python environment logs and binaries
+.venv/
+__pycache__/
+*.pyc
+
+# Local ChromaDB persistent vector vector storage files
+backend/chroma_db/
+
+# Enterprise application secrets & configuration environments
+.env
+backend/.env
+frontend/.env
+.vscode/
+
+# Node modules and Next.js compiler output build folders
+node_modules/
+frontend/node_modules/
+.next/
+frontend/.next/
