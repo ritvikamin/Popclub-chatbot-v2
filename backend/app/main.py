@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -6,6 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import admin, chat
 from app.config import settings
 from app.core.rag import get_rag
+
+
+# Show our own INFO logs (searches, rewrites, Gemini calls) in the uvicorn terminal.
+logging.basicConfig(format="%(levelname)s [%(name)s] %(message)s")
+logging.getLogger("app").setLevel(logging.INFO)
 
 
 @asynccontextmanager
