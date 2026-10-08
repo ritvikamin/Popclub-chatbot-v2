@@ -1,25 +1,32 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from app.api import admin, chat
 from app.config import settings
-from app.api import chat, admin  # Import our admin layer
+from app.core.rag import get_rag
 
-app = FastAPI(
-    title=settings.PROJECT_NAME,
-    version="2.0.0",
-    docs_url="/docs"
-)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    get_rag()  # warm-up: load the embedding model and open the DB once at startup
+    yield
+
+
+app = FastAPI(title=settings.PROJECT_NAME, version="2.1.0", docs_url="/docs", lifespan=lifespan)
+
+# Only needed if a browser calls the API directly. Streamlit calls it server-side, so CORS is moot.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
+    allow_origins=["http://localhost:8501", "http://localhost:3000"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Connect both routers cleanly
 app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["Chat Engine"])
 app.include_router(admin.router, prefix=f"{settings.API_V1_STR}/admin", tags=["Admin Operations"])
+
 
 @app.get("/health", tags=["Health"])
 async def health_check():
