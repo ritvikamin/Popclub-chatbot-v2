@@ -1,217 +1,114 @@
 # POPclub Copilot v2
 
-An enterprise-grade Retrieval-Augmented Generation (RAG) platform that couples an optimized, asynchronous **FastAPI** backend with a high-contrast minimalist **Next.js** client interface. This system uses **ChromaDB** for persistent vector storage and **Gemini 2.5 Flash** to provide reliable, context-grounded factual answers based on verified corporate documentation, preventing hallucinations entirely.
+A Retrieval-Augmented Generation (RAG) chatbot that answers questions about POPclub (UPI payments, rewards, credit card) using only the documents you give it. **FastAPI** backend, **ChromaDB** vector store, local **sentence-transformers** embeddings, **Gemini 2.5 Flash** for generation, and a **Streamlit** chat UI.
 
-![Language](https://img.shields.io/badge/language-TypeScript%20%7C%20Python-blue)
-![Framework](https://img.shields.io/badge/framework-FastAPI%20%7C%20Next.js-emerald)
-![AI](https://img.shields.io/badge/AI-Google%20Gemini%202.5-red)
-![Database](https://img.shields.io/badge/VectorDB-ChromaDB-orange)
+## How it works
 
----
-
-## Table of Contents
-
-1. [Key Architecture Upgrades (v1 vs v2)](#key-architecture-upgrades-v1-vs-v2)
-2. [Features](#features)
-3. [Tech Stack](#tech-stack)
-4. [Project Structure](#project-structure)
-5. [Installation & Local Setup](#installation--local-setup)
-6. [Usage & Knowledge Base Ingestion](#usage--knowledge-base-ingestion)
-7. [API Reference](#api-reference)
-
----
-
-## Key Architecture Upgrades (v1 vs v2)
-
-- **From Unstructured to RAG:** Version 1 loaded a static JSON file directly into memory. Version 2 introduces an industry-standard semantic search pipeline using **ChromaDB** vector storage and `all-MiniLM-L6-v2` text embeddings to query large-scale documentation fragments dynamically.
-- **From Express to FastAPI:** Rewritten in asynchronous **Python/FastAPI** with strict **Pydantic** data schema enforcement to achieve enterprise-grade fail-fast routing validations.
-- **From Vanilla JS to Next.js + TS:** The client has been completely re-engineered around the modern **Next.js App Router** and **TypeScript** for compile-time safety and a polished, minimalist user interface layout.
-
----
-
-## Features
-
-**Semantic Vector Retrieval**
-Documents uploaded to the engine are automatically cleaned, parsed into text blocks, mapped into a high-dimensional vector space, and safely stored on local disk media.
-
-**Verified Source Citations**
-Every single response from the assistant includes a list of verified reference tags along with mathematical similarity confidence scores, making the system transparent and auditable.
-
-**Minimalist Access Card Aesthetic**
-The user interface is designed around a premium, high-contrast brutalist design, featuring a functional virtual EMV smart card chip side-panel display mapping live model parameters.
-
-**Asynchronous Performance & Autoscroll**
-Built on FastAPI's native async loops paired with clean React `useRef` auto-scrolling triggers to make user conversation logs feel fluid and instantaneous.
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-| :--- | :--- |
-| **Frontend UI** | Next.js 14+ (App Router), TypeScript, Tailwind CSS |
-| **Backend API Gateway** | Python, FastAPI, Uvicorn, Pydantic |
-| **Vector Database** | ChromaDB (Persistent Storage Engine Mode) |
-| **Embedding Model** | Sentence-Transformers (`all-MiniLM-L6-v2`) |
-| **Core AI Orchestrator** | Google GenAI SDK (Gemini 2.5 Flash) |
-
----
-
-## Project Structure
-
-```text
-popclub-bot-v2/
-├── backend/
-│   ├── app/
-│   │   ├── __init__.py
-│   │   ├── main.py             # FastAPI App Initialization
-│   │   ├── config.py           # Pydantic BaseSettings management
-│   │   ├── api/                # API Route Layer (Controllers)
-│   │   │   ├── __init__.py
-│   │   │   ├── chat.py         # Chat and streaming endpoints
-│   │   │   └── admin.py        # File upload and re-indexing endpoints
-│   │   ├── core/               # Core AI Engines (The Brains)
-│   │   │   ├── __init__.py
-│   │   │   ├── embedding.py    # Local SentenceTransformers wrapper
-│   │   │   ├── vector_db.py    # ChromaDB interface
-│   │   │   └── rag.py          # Context retrieval & prompt orchestration
-│   │   ├── schemas/            # Pydantic Request/Response validation models
-│   │   │   ├── __init__.py
-│   │   │   ├── chat.py
-│   │   │   └── admin.py
-│   │   └── services/           # Business Logic Layer
-│   │       ├── __init__.py
-│   │       └── document_parser.py # JSON, MD, and Text parsing logic
-│   ├── requirements.txt        # Python Dependencies
-│   └── .env            # Your Environmental variables
-└── frontend/                  
+```
+Streamlit UI ──HTTP──> FastAPI ──> embed question (MiniLM, local)
+                                   │
+                                   ├─> ChromaDB: top-3 chunks by cosine similarity
+                                   ├─> drop chunks below MIN_RELEVANCE_SCORE
+                                   │      └─ none left? -> refuse, no LLM call
+                                   └─> Gemini: answer from those chunks only
+                                         -> answer + citations (source, text, score)
 ```
 
----
+**Ingestion** (`POST /admin/upload`): clean text -> split into 500-char chunks with 50-char overlap -> embed -> store in ChromaDB. Re-uploading a file replaces its previous chunks.
 
-## Installation & Local Setup
+**Follow-up questions:** if there is chat history, the latest message is first rewritten into a standalone question (so "what about the fee?" becomes a searchable query), and recent history is included in the prompt for context.
 
-### Prerequisites
+## Design decisions
 
-- Python 3.10 or higher installed on your machine
-- Node.js v18 or higher with npm installed
-- A Gemini API Key generated from [Google AI Studio](https://aistudio.google.com/)
+| Choice | Why |
+| :-- | :-- |
+| RAG instead of a fixed JSON/FAQ (v1) | Knowledge lives in documents that can be added or changed without code changes |
+| FastAPI | Typed request/response models (Pydantic), automatic OpenAPI docs, easy to run blocking work in a thread pool |
+| ChromaDB (embedded, persistent) | Zero-ops for a small corpus; no separate server. Would move to pgvector/Qdrant for multi-user scale |
+| Local MiniLM embeddings | Free, fast on CPU, no extra API dependency or per-call cost |
+| Cosine similarity | Compares meaning (direction) regardless of text length |
+| Gemini 2.5 Flash, temperature 0 | Low latency/cost; deterministic output for factual answers |
+| Streamlit | Python-only UI; the frontend is ~100 lines and talks to the same public API |
 
-### 1. Backend Core Setup
+## Limitations (honest list)
 
-Open a terminal, navigate to the backend directory, and create an isolated virtual environment:
+- Grounding is enforced by prompt + a relevance cutoff; this **reduces** hallucination but cannot eliminate it.
+- Chunking is character-based and can split mid-sentence; sentence/paragraph-aware splitting would retrieve better.
+- Only `.txt` / `.md` files; no PDF parsing.
+- No reranker, no hybrid (keyword + vector) search, no streaming responses.
+- Admin auth is a single shared key, not per-user auth.
+- `MIN_RELEVANCE_SCORE` was set by hand; it should be tuned against a labelled question set.
 
+## Project structure
+
+```text
+backend/
+  app/
+    main.py              # app factory, CORS, router wiring, startup warm-up
+    config.py            # settings from environment / .env (pydantic-settings)
+    api/chat.py          # POST /chat/query, GET /chat/stats
+    api/admin.py         # POST /admin/upload (requires X-Admin-Key)
+    core/vector_db.py    # embeddings + ChromaDB access (shared singleton)
+    core/rag.py          # retrieve -> filter -> prompt -> generate
+    schemas/             # Pydantic request/response models
+    services/document_parser.py  # cleaning + chunking
+  requirements.txt
+frontend/
+  app.py                 # Streamlit UI
+  requirements.txt
+knowledge.txt            # sample knowledge base
+```
+
+## Setup
+
+Backend and frontend use **separate virtual environments** so their dependencies cannot conflict.
+
+**1. Backend**
 ```bash
 cd backend
 python -m venv .venv
-```
-
-Activate the virtual environment:
-
-- **Windows (CMD/PowerShell):** `.venv\Scripts\activate`
-- **Mac/Linux:** `source .venv/bin/activate`
-
-Install all necessary production-grade dependencies:
-
-```bash
+.venv\Scripts\activate          # Mac/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 ```
-
-Create a file named exactly `.env` directly inside the `backend/` directory:
-
+Create `backend/.env`:
 ```
-GEMINI_API_KEY="AIzaSyYourActualGeminiAPIKeyGoesHere"
+GEMINI_API_KEY="your-gemini-key"
+ADMIN_API_KEY="any-long-random-string"
 ```
+Run: `uvicorn app.main:app --reload`  (API docs at http://localhost:8000/docs)
 
-Launch the backend API gateway using Uvicorn:
-
-```bash
-uvicorn app.main:app --reload
-```
-
-The backend engine docs will now be serving at `http://localhost:8000/docs`.
-
-### 2. Frontend Interface Setup
-
-Open a separate terminal window (keep the backend server running) and move into the frontend directory:
-
+**2. Frontend** (new terminal)
 ```bash
 cd frontend
-npm install
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+streamlit run app.py
 ```
 
-Launch the Next.js local development workspace:
+**3. Load the knowledge base:** in the Streamlit sidebar enter your admin key, choose `knowledge.txt`, and click **Index document**.
 
-```bash
-npm run dev
-```
+## Configuration (environment variables)
 
-Open your browser and navigate to `http://localhost:3000` to view your app.
+| Variable | Default | Meaning |
+| :-- | :-- | :-- |
+| `GEMINI_API_KEY` | required | Google AI Studio key |
+| `ADMIN_API_KEY` | empty (admin disabled) | Secret for the upload endpoint |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Generation model |
+| `TOP_K` | `3` | Chunks retrieved per question |
+| `MIN_RELEVANCE_SCORE` | `0.25` | Minimum cosine similarity for a chunk to be used |
+| `MAX_HISTORY_MESSAGES` | `6` | Recent messages used for follow-ups |
+| `CHUNK_SIZE` / `CHUNK_OVERLAP` | `500` / `50` | Chunking parameters |
 
----
+Frontend: `API_URL` (default `http://localhost:8000`).
 
-## Usage & Knowledge Base Ingestion
+## API
 
-By default, the persistent vector database boots up empty. If you ask a question right away, the bouncer system will safely tell you it does not possess that knowledge. To seed the engine with the provided POPclub core context:
+- `POST /api/v1/chat/query` - body `{"message": "...", "history": [{"role": "user|assistant", "content": "..."}]}` -> `{"answer": "...", "citations": [{"source", "text", "score"}]}`
+- `GET /api/v1/chat/stats` -> `{"chunks": 8, "sources": ["knowledge.txt"]}`
+- `POST /api/v1/admin/upload` (header `X-Admin-Key`, multipart `file`) -> indexing receipt
+- `GET /health`
 
-1. Go to the interactive Swagger UI panel at `http://localhost:8000/docs`.
-2. Click to expand the green `POST /api/v1/admin/upload` endpoint segment.
-3. Click the **"Try it out"** button.
-4. Click **"Choose File"** and upload the template data file (you can paste the raw structural text below into a local file named `knowledge.txt`).
-5. Click **"Execute"**.
+## History
 
-The backend will chunk the document, run embedding loops, and save the vectorized indices directly onto your machine's local disk space inside `backend/chroma_db/`. You can now query your minimalist UI on port 3000 regarding team structures, POPcoin valuation vectors, or partner credit card tier offerings cleanly!
-
-### Ingestion Data Sheet (`knowledge.txt`)
-
-```text
-POPclub (also known as POP UPI) is India's most rewarding UPI payment, shopping, and credit card app. Its legal name is Poptech Growth Private Limited. It combines fast UPI payments with a powerful rewards ecosystem where users earn POPcoins on every transaction which can be redeemed for shopping discounts, vouchers, and exclusive deals. POPclub was founded in May 2023 by Bhargav Errangi, a fintech and e-commerce professional who saw that UPI lacked a strong rewards ecosystem and built POP to fill that gap. The business head and nodal officer is Rajat Mittal, and senior engineering is led by Puneeth Uchil. POPclub has its registered office in Mumbai, Maharashtra, and its corporate office in Bengaluru, Karnataka. It is trusted by over 1 crore (10 million) users across India. The official website is https://popclub.co, and it operates in the fintech, e-commerce, and digital payments sectors.
-
-Regarding POPcoins rewards rules: 1 POPcoin is always worth exactly 1 INR (1 POPcoin = ₹1, always). Users guaranteed earn 2% POPcoins on every UPI transfer to friends, family, or merchants. Users earn 5% back in POPcoins on every online transaction using the YES BANK POPclub Credit Card, and earn 2 POPcoins per 100 INR on offline spends. Popcoins redemption options include shopping on POPshop at up to 80% off on 500+ brands, or redeeming for gift vouchers from Zomato, Amazon, Swiggy, Myntra, Uber, Ola, and Zepto. Users can also partially convert coins to cashback where 10 POPcoins equals 1 INR, or explore curated deals under 999, 499, and 99 INR. POPcoins are valid for 365 days (1 year) from the date of credit and cannot be transferred between accounts. Users can check their balance by opening the POP app and tapping the coins section at the top right corner.
-
-The core product is POP UPI, a super-fast and secure UPI payment platform. It allows users to scan any QR code, send or receive money instantly, and earn a guaranteed 2% POPcoins on every transaction with real-time notifications and industry-grade security on every transaction with zero joining fee.
-
-Another major product is the YES BANK POPclub Credit Card. This is India's most rewarding RuPay credit card, exclusively for POP users. It is a lifetime free card with zero annual fees and zero joining fees as part of a limited-time offer, coming with 5,000 INR worth of joining and welcome benefits. It offers 5% back in POPcoins on every online transaction, 2 POPcoins per 100 INR on offline spends, and allows users to use credit on UPI via the POP platform. Users can manage the card and track offers directly inside the POP app. To apply, users download the POP app, complete their KYC, and apply directly inside the app.
-
-The app features POPshop, an online rewards marketplace inside the POP app with 500+ curated D2C brands. Users can use POPcoins to shop at massive discounts between 60% to 80% off running all year round. Brands include Nike, Puma, boAt, NOISE, Foxtale, Snitch, and Portronics, alongside vouchers for Zomato, Swiggy, Amazon, Myntra, Uber, Ola, and Zepto. It features daily refreshed deals every 24 hours, POPminis trial-sized products, and zero-cost delivery on the first order.
-
-The app also features a Refer and Earn program where users can refer friends to POP and earn 25 INR plus 100 POPcoins per successful referral.
-
-The POP app is completely free to download and use. It can be downloaded on Android by searching 'POP' on the Google Play Store, or on iOS by searching 'POP' on the Apple App Store. POP uses industry-grade security for all transactions and has received TPAP approval from NPCI to operate as an official UPI application. It is partnered with YES Bank and Juspay for a robust, secure UPI infrastructure.
-```
-
----
-
-## API Reference
-
-### `POST /api/v1/chat/query`
-
-Queries the semantic vector space collection, extracts top contextual matches, and generates a grounded response.
-
-**Request Payload Contract** (`application/json`)
-
-```json
-{
-  "message": "What benefits come with the YES BANK card?",
-  "history": []
-}
-```
-
-**Response Payload Contract** (`200 OK`)
-
-```json
-{
-  "answer": "The YES BANK POPclub Credit Card offers 5% back in POPcoins on every online transaction...",
-  "citations": [
-    {
-      "source": "knowledge.txt",
-      "text": "Another major product is the YES BANK POPclub Credit Card...",
-      "score": 0.892
-    }
-  ]
-}
-```
-
----
-
-**Repository Architecture:** [github.com/ritvikamin/popclub-copilot-v2](https://github.com/ritvikamin/popclub-copilot-v2)
+The earlier Next.js/TypeScript frontend is preserved in the `main` branch history.
